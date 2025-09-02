@@ -1,0 +1,37 @@
+# Build artifacts
+function.zip
+*.zip
+out.json
+response.json
+requirements.txt
+
+# Temporary files
+/tmp/
+*.tmp
+*.bak
+
+# AWS SAM build artifacts
+.aws-sam/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

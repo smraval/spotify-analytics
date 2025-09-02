@@ -1,0 +1,231 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Spotify Streaming Analytics – serverless pipeline (us-west-2)
+
+Parameters:
+  RawBucketName:
+    Type: String
+    Description: RAW S3 bucket (already created)
+  ProcBucketName:
+    Type: String
+    Description: PROC S3 bucket (already created)
+  SpotifySecretId:
+    Type: String
+    Default: spotify/oauth
+  AlertEmail:
+    Type: String
+    Description: Email for pipeline alerts (SNS subscription)
+  ScheduleCron:
+    Type: String
+    Default: cron(0 7 * * ? *)  # 07:00 UTC ~ midnight PT
+
+Resources:
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties: { TopicName: spotify-pipeline-alerts }
+
+  AlertsSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: email
+      TopicArn: !Ref AlertsTopic
+      Endpoint: !Ref AlertEmail
+
+  SpotifyLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: spotify-lambda-inline
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SpotifySecretId}*
+              - Effect: Allow
+                Action: [ s3:PutObject, s3:ListBucket ]
+                Resource:
+                  - !Sub arn:aws:s3:::${RawBucketName}
+                  - !Sub arn:aws:s3:::${RawBucketName}/*
+              - Effect: Allow
+                Action: [ logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents ]
+                Resource: "*"
+
+  SpotifyIngest:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: spotify-ingest
+      Runtime: python3.11
+      Handler: ingest_spotify.handler
+      CodeUri: lambda/
+      Role: !GetAtt SpotifyLambdaRole.Arn
+      Timeout: 60
+      Environment:
+        Variables:
+          RAW_BUCKET: !Ref RawBucketName
+          SPOTIFY_SECRET_ID: !Ref SpotifySecretId
+
+  GlueRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: glue.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: glue-s3-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [ s3:GetObject, s3:PutObject, s3:ListBucket ]
+                Resource:
+                  - !Sub arn:aws:s3:::${RawBucketName}
+                  - !Sub arn:aws:s3:::${RawBucketName}/*
+                  - !Sub arn:aws:s3:::${ProcBucketName}
+                  - !Sub arn:aws:s3:::${ProcBucketName}/*
+
+  GlueDB:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput: { Name: spotify_raw_db }
+
+  GlueCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: spotify-raw-crawler
+      Role: !GetAtt GlueRole.Arn
+      DatabaseName: !GetAtt GlueDB.DatabaseInput.Name
+      Targets:
+        S3Targets: [ { Path: !Sub s3://${RawBucketName}/raw/ } ]
+      SchemaChangePolicy:
+        UpdateBehavior: UPDATE_IN_DATABASE
+        DeleteBehavior: DEPRECATE_IN_DATABASE
+
+  GlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: spotify-transform
+      Role: !GetAtt GlueRole.Arn
+      Command:
+        Name: glueetl
+        PythonVersion: '3'
+        ScriptLocation: !Sub s3://${ProcBucketName}/jobs/transform_spotify.py
+      GlueVersion: '4.0'
+      DefaultArguments:
+        --job-language: python
+        --TempDir: !Sub s3://${ProcBucketName}/tmp/
+
+  StateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: states.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: sfn-invoke
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt SpotifyIngest.Arn
+              - Effect: Allow
+                Action: glue:StartCrawler
+                Resource: !Ref GlueCrawler
+              - Effect: Allow
+                Action: glue:GetCrawler
+                Resource: !Ref GlueCrawler
+              - Effect: Allow
+                Action: glue:StartJobRun
+                Resource: !Ref GlueJob
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref AlertsTopic
+
+  PipelineStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      RoleArn: !GetAtt StateMachineRole.Arn
+      StateMachineName: spotify-pipeline
+      DefinitionString:
+        Fn::Sub: |
+          {
+            "Comment": "Spotify daily pipeline",
+            "StartAt": "Ingest",
+            "States": {
+              "Ingest": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::lambda:invoke",
+                "Parameters": { "FunctionName": "${SpotifyIngest.Arn}" },
+                "Retry": [{ "ErrorEquals": ["States.ALL"], "IntervalSeconds": 5, "MaxAttempts": 3, "BackoffRate": 2 }],
+                "Next": "StartCrawler"
+              },
+              "StartCrawler": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::aws-sdk:glue:startCrawler",
+                "Parameters": { "Name": "spotify-raw-crawler" },
+                "Next": "WaitForCrawl"
+              },
+              "WaitForCrawl": { "Type": "Wait", "Seconds": 30, "Next": "GetCrawler" },
+              "GetCrawler": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::aws-sdk:glue:getCrawler",
+                "Parameters": { "Name": "spotify-raw-crawler" },
+                "Next": "CrawlDone?"
+              },
+              "CrawlDone?": {
+                "Type": "Choice",
+                "Choices": [{ "Variable": "$.Crawler.State", "StringEquals": "READY", "Next": "RunGlueJob" }],
+                "Default": "WaitForCrawl"
+              },
+              "RunGlueJob": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::glue:startJobRun.sync",
+                "Parameters": { "JobName": "spotify-transform" },
+                "Next": "NotifySuccess"
+              },
+              "NotifySuccess": {
+                "Type": "Task",
+                "Resource": "arn:aws:states:::sns:publish",
+                "Parameters": { "TopicArn":"${AlertsTopic}", "Message":"Spotify pipeline success" },
+                "End": true
+              }
+            },
+            "TimeoutSeconds": 3600
+          }
+
+  DailySchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: !Ref ScheduleCron
+      State: ENABLED
+      Targets:
+        - Arn: !Ref PipelineStateMachine
+          Id: StateMachineTarget
+
+Outputs:
+  StateMachineArn:
+    Value: !Ref PipelineStateMachine
+  LambdaName:
+    Value: !Ref SpotifyIngest
+  RawBucketOut:
+    Value: !Ref RawBucketName
+  ProcBucketOut:
+    Value: !Ref ProcBucketName
+  AlertsTopicArn:
+    Value: !Ref AlertsTopic
