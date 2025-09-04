@@ -39,7 +39,6 @@ spotify api → lambda → s3 raw → glue → s3 proc → athena → tableau
 
 <p align="center">
    <img height="300" alt="Albums on Repeat (1)" src="https://github.com/user-attachments/assets/576297f8-0a54-41b3-8248-844ea1a81192" />
-  <img src="https://github.com/user-attachments/assets/0f5bfe00-d756-4705-8b80-ef0b4d979d11" alt="My Top Artists" height="300"/>
   <img src="https://github.com/user-attachments/assets/4f1cc1ba-0a5e-4976-8602-59ddc6d9cdc7" alt="Favorite Tracks by Year" height="300"/>
 </p>
 
