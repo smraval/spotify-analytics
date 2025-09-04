@@ -13,7 +13,13 @@ df = (df
     .withColumn("region", F.coalesce(F.col("user_country"), F.element_at("available_markets", 1)))
     # Add derived columns for analytics
     .withColumn("track_duration_minutes", F.col("track_duration_ms") / 60000.0)
-    .withColumn("release_year", F.year(F.to_date(F.col("release_date"))))
+    # Better release year extraction with validation
+    .withColumn("release_year", 
+        F.when((F.col("release_date").isNotNull()) & 
+               (F.year(F.to_date(F.col("release_date"))) <= F.year(F.current_date())) & 
+               (F.year(F.to_date(F.col("release_date"))) >= F.lit(1900)),
+               F.year(F.to_date(F.col("release_date"))))
+         .otherwise(F.lit(None)))
     .withColumn("is_explicit", F.col("track_explicit"))
     .withColumn("popularity_tier", 
         F.when(F.col("track_popularity") >= 80, "High")
