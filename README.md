@@ -4,14 +4,11 @@ an end-to-end aws pipeline that ingests spotify web api data, transforms it into
 ## 🔨 architecture overview
 spotify api → lambda → s3 raw → glue → s3 proc → athena → tableau
 
-
 ### **data flow**
 - **lambda**: pulls spotify data daily into s3 raw  
 - **glue (crawler + job)**: infers schema, converts json → parquet  
 - **athena**: runs sql queries over partitioned parquet datasets  
 - **tableau**: connects via csv exports to build dashboards  
-
----
 
 ### **tech stack**
 - **aws**: lambda, s3, glue, athena
@@ -19,8 +16,6 @@ spotify api → lambda → s3 raw → glue → s3 proc → athena → tableau
 - **apis**: spotify web api  
 - **data formats**: ndjson, parquet, json/csv
 - **bi tools**: tableau  
-
----
 
 ## 📊 analytics examples
 
@@ -30,29 +25,19 @@ spotify api → lambda → s3 raw → glue → s3 proc → athena → tableau
 - track duration vs. popularity scatter plots  
 - release year distribution of favorite music  
 
-📸 
-
----
-
 ### 🎤 music identity  
 *artist-level analysis of music taste.*  
 - top artists by play count  
 - genre composition and distributions  
 - popularity vs. follower counts across artists  
 
-📸 
-
----
-
 ### 📈 taste shifts  
 *longitudinal view of how preferences evolve.*  
 - mainstream vs. niche music trends  
 - popularity distributions over time  
-- patterns in personal taste evolution  
+- patterns in personal taste evolution
+<img width="600px" height="450px" alt="Albums on Repeat (1)" src="https://github.com/user-attachments/assets/d3cbb05a-17ec-4ba0-8ad5-259e89ae286a" />
 
-📸  
-
----
 
 ## 🚀 future enhancements
 - **step functions + eventbridge** for orchestration and daily automation  
