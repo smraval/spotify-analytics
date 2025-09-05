@@ -37,11 +37,7 @@ spotify api → lambda → s3 raw → glue → s3 proc → athena → tableau
 - popularity distributions over time  
 - patterns in personal taste evolution
 
-<p align="center">
-   <img height="300" alt="Albums on Repeat (1)" src="https://github.com/user-attachments/assets/576297f8-0a54-41b3-8248-844ea1a81192" />
-  <img src="https://github.com/user-attachments/assets/4f1cc1ba-0a5e-4976-8602-59ddc6d9cdc7" alt="Favorite Tracks by Year" height="300"/>
-</p>
-
+<img width="2398" height="1598" alt="How I Listen" src="https://github.com/user-attachments/assets/a391290d-d9f1-4a80-8255-68dea5cc5e0c" />
 
 ## 🚀 future enhancements
 - **step functions + eventbridge** for orchestration and daily automation  
